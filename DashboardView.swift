@@ -601,7 +601,6 @@ struct DashboardView: View {
             }
             
             listener?.newConnectionHandler = { connection in
-                logConsole("[SERVER] 新規クライアント接続を受信: \(connection.endpoint)")
                 connection.start(queue: .main)
                 self.handleIncomingConnection(connection)
             }
@@ -619,19 +618,82 @@ struct DashboardView: View {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, isComplete, error in
             if let data = data, !data.isEmpty {
                 let requestStr = String(decoding: data, as: UTF8.self)
-                // HTTPリクエストの先頭（GET / POST など）を切り出してログに流す
                 let firstLine = requestStr.components(separatedBy: "\r\n").first ?? "Unknown request"
-                logConsole("[HTTP REQUEST] \(firstLine)")
                 
-                // 本物のEpicGamesのダミーAPIレスポンス (JSON) をTCPソケット経由で返却する
-                let responseBody = """
-                {
-                    "status": "OK",
-                    "server": "Moonlauncher Local API Redirect",
-                    "mode": "Active",
-                    "authenticated": true
+                // Epic Games API パス判定
+                var responseBody = ""
+                var handled = false
+                
+                if firstLine.contains("/account/api/oauth/token") {
+                    // 1. オートログイン用の認証トークン発行
+                    logConsole("[BYPASS] Fortniteがログイン要求を送信 -> トークンを自動発行してログインをバイパス中...")
+                    responseBody = """
+                    {
+                        "access_token": "moon_mock_token_12345",
+                        "expires_in": 28800,
+                        "token_type": "bearer",
+                        "account_id": "moon_launcher_user_id",
+                        "client_id": "fortnite_client_id",
+                        "displayName": "\(username)"
+                    }
+                    """
+                    handled = true
+                } else if firstLine.contains("/account/api/public/account/") {
+                    // 2. ユーザー名情報の返却
+                    logConsole("[BYPASS] クライアントからアカウント情報の照会 -> ユーザー '\(username)' を自動認証中...")
+                    responseBody = """
+                    {
+                        "id": "moon_launcher_user_id",
+                        "displayName": "\(username)",
+                        "name": "Moon",
+                        "email": "moon@launcher.local",
+                        "failedLoginAttempts": 0,
+                        "lastLogin": "2026-07-25T00:00:00.000Z",
+                        "numberOfDisplayNameChanges": 0,
+                        "ageGroup": "UNKNOWN",
+                        "headless": false,
+                        "country": "JP",
+                        "lastName": "Launcher",
+                        "preferredLanguage": "ja",
+                        "canPlay": true
+                    }
+                    """
+                    handled = true
+                } else if firstLine.contains("/fortnite/api/game/v2/profile/") {
+                    // 3. プロファイル・インベントリ要求のハンドリング
+                    logConsole("[BYPASS] プロファイルインベントリ照会 -> ダミーデータをロードし、初期ローディング画面をバイパス...")
+                    responseBody = """
+                    {
+                        "profileRevision": 1,
+                        "profileId": "athena",
+                        "profileChangesBaseRevision": 1,
+                        "profileChanges": []
+                    }
+                    """
+                    handled = true
+                } else if firstLine.contains("/fortnite/api/game/v2/grant_access_token") {
+                    // 4. ゲームアクセストークン
+                    responseBody = """
+                    {
+                        "access_token": "game_mock_access_token",
+                        "expires_in": 3600
+                    }
+                    """
+                    handled = true
                 }
-                """
+                
+                // マッチしなかったリクエストは一般的なOKステータスを返却
+                if !handled {
+                    logConsole("[HTTP REQUEST] \(firstLine)")
+                    responseBody = """
+                    {
+                        "status": "OK",
+                        "service": "Moonlauncher Custom Server Redirection",
+                        "bypassed": true
+                    }
+                    """
+                }
+                
                 let httpResponse = """
                 HTTP/1.1 200 OK\r
                 Content-Type: application/json\r
@@ -643,7 +705,7 @@ struct DashboardView: View {
                 
                 connection.send(content: httpResponse.data(using: .utf8), completion: .contentProcessed({ error in
                     if let error = error {
-                        logConsole("[SERVER] レスポンス送信失敗: \(error.localizedDescription)")
+                        logConsole("[SERVER] 送信エラー: \(error.localizedDescription)")
                     }
                     connection.cancel()
                 }))
