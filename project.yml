@@ -1,0 +1,19 @@
+name: Moonlauncher
+options:
+  bundleIdPrefix: com.runadeesu
+targets:
+  Moonlauncher:
+    type: application
+    platform: iOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: .
+        excludes:
+          - "project.yml"
+          - "build_ipa_windows.bat"
+          - "build_ipa.ps1"
+    settings:
+      CODE_SIGNING_ALLOWED: false
+      CODE_SIGNING_REQUIRED: false
+      CODE_SIGN_IDENTITY: ""
+      PROVISIONING_PROFILE_SPECIFIER: ""
