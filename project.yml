@@ -12,6 +12,9 @@ targets:
           - "project.yml"
           - "build_ipa_windows.bat"
           - "build_ipa.ps1"
+          - "codemagic.yaml"
+          - "index.html"
+          - "README.md"
     settings:
       CODE_SIGNING_ALLOWED: false
       CODE_SIGNING_REQUIRED: false
