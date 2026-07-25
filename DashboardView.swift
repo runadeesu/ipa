@@ -75,6 +75,10 @@ struct DashboardView: View {
     @State private var customIpaPath: String = ""
     @State private var showDocumentPicker = false
     
+    // Custom Client URL Scheme Configuration
+    @State private var customUrlScheme = "fortnite://"
+    @State private var urlSchemes = ["fortnite://", "nova://", "polaris://", "reboot://"]
+    
     // Play Mode & Playlist Config
     @State private var selectedPlayMode: PlayMode = .botMatch
     @State private var selectedPlaylist: Playlist = .solo
@@ -393,12 +397,44 @@ struct DashboardView: View {
                 )
                 .padding(.horizontal)
                 
-                // Game Version Selector
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("クライアントバージョンの選択")
+                // Game Version & Client Target URL Scheme Setup
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("起動先古いFortniteクライアント設定")
                         .font(.headline)
                         .foregroundColor(.white)
-                        .padding(.horizontal)
+                    
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("起動スキーム（インストールした昔のFortniteのスキーム）")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                        
+                        HStack {
+                            TextField("fortnite://", text: $customUrlScheme)
+                                .font(.system(size: 13, design: .monospaced))
+                                .padding(10)
+                                .background(Color.white.opacity(0.04))
+                                .cornerRadius(8)
+                                .foregroundColor(.white)
+                            
+                            Menu {
+                                ForEach(urlSchemes, id: \.self) { scheme in
+                                    Button(scheme) {
+                                        customUrlScheme = scheme
+                                    }
+                                }
+                            } label: {
+                                Image(systemName: "chevron.down.circle.fill")
+                                    .font(.system(size: 24))
+                                    .foregroundColor(.purple)
+                            }
+                        }
+                    }
+                    
+                    Divider().background(Color.white.opacity(0.05))
+                    
+                    Text("クライアントバージョンの選択")
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
                     
                     ForEach(versions) { version in
                         HStack(spacing: 16) {
@@ -437,8 +473,11 @@ struct DashboardView: View {
                             logConsole("Version selected: \(verName)")
                         }
                     }
-                    .padding(.horizontal)
                 }
+                .padding()
+                .background(Color.white.opacity(0.02))
+                .cornerRadius(16)
+                .padding(.horizontal)
                 
                 // Dylib Settings Card
                 VStack(alignment: .leading, spacing: 14) {
@@ -793,15 +832,15 @@ struct DashboardView: View {
                 logConsole("[SUCCESS] MoonLauncher が Fortnite のフック起動に成功しました！")
                 isLaunching = false
                 
-                // 本物のFortniteアプリをURL Scheme経由でバックグラウンドから実起動させる
-                let fortniteURLString = "com.epicgames.fortnite://"
-                if let url = URL(string: fortniteURLString) {
-                    logConsole("[LAUNCH] URL Scheme \(fortniteURLString) からゲーム本体を直接実起動します...")
+                // 設定された独自のカスタムURLスキーム（インストールされた昔のFortniteアプリ）を開く
+                let cleanScheme = customUrlScheme.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let url = URL(string: cleanScheme) {
+                    logConsole("[LAUNCH] カスタムURLスキーム '\(cleanScheme)' から古いFortniteクライアントを起動します...")
                     UIApplication.shared.open(url, options: [:]) { success in
                         if success {
                             logConsole("[LAUNCH] クライアントの起動フックに成功しました。")
                         } else {
-                            logConsole("[LAUNCH] エラー: クライアントがインストールされていないか、URLスキームが無効です。")
+                            logConsole("[LAUNCH] エラー: スキーム '\(cleanScheme)' に対応する昔のFortniteアプリが見つかりません。")
                         }
                     }
                 }
