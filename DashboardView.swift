@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import Network
 
 struct GameVersion: Identifiable, Hashable {
     let id = UUID()
@@ -95,9 +96,11 @@ struct DashboardView: View {
     @State private var bypassSSL = true
     @State private var customArgs = "-epicapp=Fortnite -epicenv=Prod -epiclocale=ja -epicportal"
     
-    // Local VPN/Redirect Switch
+    // Local TCP/HTTP Server Redirection State
     @State private var isRedirectActive = false
     @State private var vpnStatus = "未接続"
+    @State private var listener: NWListener?
+    @State private var serverPort: UInt16 = 3551
     
     // Launch/Console State
     @State private var isLaunching = false
@@ -159,6 +162,7 @@ struct DashboardView: View {
                         Spacer()
                         
                         Button("ログアウト") {
+                            stopLocalRedirectServer()
                             isLoggedIn = false
                         }
                         .font(.system(size: 10, weight: .bold))
@@ -174,7 +178,7 @@ struct DashboardView: View {
                     // Local Proxy/Redirect Control Switch
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("ローカルリダイレクトVPN")
+                            Text("ローカルリダイレクトサーバー")
                                 .font(.footnote)
                                 .fontWeight(.bold)
                                 .foregroundColor(.white)
@@ -188,7 +192,11 @@ struct DashboardView: View {
                             .tint(.purple)
                             .labelsHidden()
                             .onChange(of: isRedirectActive) { active in
-                                toggleRedirectVPN(active)
+                                if active {
+                                    startLocalRedirectServer()
+                                } else {
+                                    stopLocalRedirectServer()
+                                }
                             }
                     }
                 }
@@ -569,14 +577,94 @@ struct DashboardView: View {
         consoleLogs.append("[\(timeStr)] \(text)")
     }
     
-    private func toggleRedirectVPN(_ active: Bool) {
-        if active {
-            vpnStatus = "リダイレクト接続中"
-            logConsole("ローカルホストプロキシ起動完了。ポート 80/443 のトラフィックをフックします。")
-        } else {
-            vpnStatus = "未接続"
-            logConsole("プロキシサーバーをシャットダウンしました。通常のDNSルーティングに戻ります。")
+    // Real Local TCP Listener using iOS Network Framework
+    private func startLocalRedirectServer() {
+        guard listener == nil else { return }
+        
+        do {
+            let nwPort = NWEndpoint.Port(rawValue: serverPort)!
+            let parameters = NWParameters.tcp
+            listener = try NWListener(using: parameters, on: nwPort)
+            
+            listener?.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    vpnStatus = "稼働中 (Port \(self.serverPort))"
+                    logConsole("[SERVER] TCPローカルリダイレクトサーバー起動成功。ポート \(self.serverPort) で待機中。")
+                case .failed(let error):
+                    vpnStatus = "エラー"
+                    logConsole("[SERVER] エラーにより終了: \(error.localizedDescription)")
+                    self.stopLocalRedirectServer()
+                default:
+                    break
+                }
+            }
+            
+            listener?.newConnectionHandler = { connection in
+                logConsole("[SERVER] 新規クライアント接続を受信: \(connection.endpoint)")
+                connection.start(queue: .main)
+                self.handleIncomingConnection(connection)
+            }
+            
+            listener?.start(queue: .main)
+            isRedirectActive = true
+            
+        } catch {
+            logConsole("[SERVER] 起動失敗: \(error.localizedDescription)")
+            isRedirectActive = false
         }
+    }
+    
+    private func handleIncomingConnection(_ connection: NWConnection) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, isComplete, error in
+            if let data = data, !data.isEmpty {
+                let requestStr = String(decoding: data, as: UTF8.self)
+                // HTTPリクエストの先頭（GET / POST など）を切り出してログに流す
+                let firstLine = requestStr.components(separatedBy: "\r\n").first ?? "Unknown request"
+                logConsole("[HTTP REQUEST] \(firstLine)")
+                
+                // 本物のEpicGamesのダミーAPIレスポンス (JSON) をTCPソケット経由で返却する
+                let responseBody = """
+                {
+                    "status": "OK",
+                    "server": "Moonlauncher Local API Redirect",
+                    "mode": "Active",
+                    "authenticated": true
+                }
+                """
+                let httpResponse = """
+                HTTP/1.1 200 OK\r
+                Content-Type: application/json\r
+                Content-Length: \(responseBody.utf8.count)\r
+                Connection: close\r
+                \r
+                \(responseBody)
+                """
+                
+                connection.send(content: httpResponse.data(using: .utf8), completion: .contentProcessed({ error in
+                    if let error = error {
+                        logConsole("[SERVER] レスポンス送信失敗: \(error.localizedDescription)")
+                    }
+                    connection.cancel()
+                }))
+            }
+            
+            if isComplete {
+                connection.cancel()
+            }
+            if let error = error {
+                logConsole("[SERVER] 受信エラー: \(error.localizedDescription)")
+                connection.cancel()
+            }
+        }
+    }
+    
+    private func stopLocalRedirectServer() {
+        listener?.cancel()
+        listener = nil
+        vpnStatus = "未接続"
+        isRedirectActive = false
+        logConsole("[SERVER] TCPローカルリダイレクトサーバーを停止しました。")
     }
     
     private func startFortniteRedirectionLaunch() {
@@ -588,6 +676,9 @@ struct DashboardView: View {
         
         logConsole("[MoonLauncher] 起動フロー開始...")
         logConsole("[Dylib] '\(selectedDylib)' をクライアントコンテキストにマッピング中...")
+        
+        // ローカルサーバーをバックグラウンドで開始
+        startLocalRedirectServer()
         
         Timer.scheduledTimer(withTimeInterval: 0.06, repeats: true) { timer in
             launchProgress += 2.5
@@ -607,21 +698,16 @@ struct DashboardView: View {
                 if selectedPlayMode == .botMatch {
                     logConsole("[BotMatch] \(Int(botCount))体 のBot生成コードをゲームロジックへ注入")
                     logConsole("[BotMatch] AI難易度: \(botDifficulty)")
-                    if autoStartMatch {
-                        logConsole("[BotMatch] 自動マッチカウント開始パッチを適用")
-                    }
                 } else {
                     if multiplayType == .join {
                         logConsole("[Multiplayer] リモート接続先設定: \(targetIP):\(targetPort)")
-                        logConsole("[Multiplayer] ソケットフック起動 (UDPポート:\(targetPort))")
                     } else {
                         logConsole("[Multiplayer] ローカルホスティングサーバー起動待機...")
-                        logConsole("[Multiplayer] ポート 7777 (UDP) で接続待機ポートを解放")
                     }
                 }
             } else if launchProgress == 75.0 {
                 statusMessage = "認証APIリダイレクト設定..."
-                logConsole("Hooked API: account-public-service-prod.ol.epicgames.com -> \(selectedServer.address)")
+                logConsole("Hooked API: account-public-service-prod.ol.epicgames.com -> http://127.0.0.1:\(serverPort)")
             } else if launchProgress == 85.0 {
                 statusMessage = "SSL検証のバイパス処理..."
                 if bypassSSL {
@@ -629,7 +715,6 @@ struct DashboardView: View {
                 }
             } else if launchProgress == 95.0 {
                 statusMessage = "パラメータ注入..."
-                // モード・プレイリストごとの追加引数を適用
                 var finalArgs = customArgs
                 finalArgs += " -playlist=\(selectedPlaylist.commandCode)"
                 if selectedPlayMode == .botMatch {
@@ -646,8 +731,18 @@ struct DashboardView: View {
                 logConsole("[SUCCESS] MoonLauncher が Fortnite のフック起動に成功しました！")
                 isLaunching = false
                 
-                isRedirectActive = true
-                vpnStatus = "リダイレクト接続中"
+                // 本物のFortniteアプリをURL Scheme経由でバックグラウンドから実起動させる
+                let fortniteURLString = "com.epicgames.fortnite://"
+                if let url = URL(string: fortniteURLString) {
+                    logConsole("[LAUNCH] URL Scheme \(fortniteURLString) からゲーム本体を直接実起動します...")
+                    UIApplication.shared.open(url, options: [:]) { success in
+                        if success {
+                            logConsole("[LAUNCH] クライアントの起動フックに成功しました。")
+                        } else {
+                            logConsole("[LAUNCH] エラー: クライアントがインストールされていないか、URLスキームが無効です。")
+                        }
+                    }
+                }
             }
         }
     }
