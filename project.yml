@@ -27,6 +27,7 @@ targets:
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: "1"
         UILaunchScreen: {}
+        CFBundleIconName: AppIcon
     settings:
       CODE_SIGNING_ALLOWED: false
       CODE_SIGNING_REQUIRED: false
