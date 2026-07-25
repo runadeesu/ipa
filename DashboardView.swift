@@ -37,7 +37,7 @@ enum Playlist: String, CaseIterable, Identifiable {
         case .duo: return "playlist_defaultduo"
         case .trio: return "playlist_trios"
         case .squad: return "playlist_defaultsquad"
-        case .creative: return "playlist_playground" // Creative Map / Playground
+        case .creative: return "playlist_playground"
         }
     }
 }
@@ -263,7 +263,7 @@ struct DashboardView: View {
                     
                     Divider().background(Color.white.opacity(0.05))
                     
-                    // Playlist Selector (Solo, Duo, Trio, Squad, Creative)
+                    // Playlist Selector (BR Rules)
                     VStack(alignment: .leading, spacing: 8) {
                         Text("プレイリスト (ゲームルール)")
                             .font(.subheadline)
@@ -425,7 +425,8 @@ struct DashboardView: View {
                         .onTapGesture {
                             selectedVersion = version
                             customIpaPath = ""
-                            logConsole("Version selected: \(version.name)")
+                            let verName = version.name
+                            logConsole("Version selected: \(verName)")
                         }
                     }
                     .padding(.horizontal)
@@ -599,7 +600,8 @@ struct DashboardView: View {
                 logConsole("インジェクター: \(selectedDylib) のロードアドレス確定 -> 0x7fffbc9a00")
             } else if launchProgress == 45.0 {
                 statusMessage = "プレイリスト適用設定..."
-                logConsole("[Playlist] プレイリストコードマッピング完了: \(selectedPlaylist.rawValue) (\(selectedPlaylist.commandCode))")
+                let plistCode = selectedPlaylist.commandCode
+                logConsole("[Playlist] プレイリストコードマッピング完了: \(selectedPlaylist.rawValue) (\(plistCode))")
             } else if launchProgress == 60.0 {
                 statusMessage = "プレイモード構成適用..."
                 if selectedPlayMode == .botMatch {
@@ -736,5 +738,44 @@ struct ServerManagerView: View {
         
         newServerName = ""
         newServerAddress = ""
+    }
+}
+
+// SwiftUI DocumentPicker Integration
+struct DocumentPicker: UIViewControllerRepresentable {
+    @Binding var ipaPath: String
+    @Binding var versions: [GameVersion]
+    
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [UTType(filenameExtension: "ipa")].compactMap({$0}))
+        picker.delegate = context.coordinator
+        return picker
+    }
+    
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    class Coordinator: NSObject, UIDocumentPickerDelegate {
+        var parent: DocumentPicker
+        
+        init(_ parent: DocumentPicker) {
+            self.parent = parent
+        }
+        
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            guard let selectedURL = urls.first else { return }
+            parent.ipaPath = selectedURL.lastPathComponent
+            
+            let importedVersion = GameVersion(
+                name: "カスタム IPA: " + selectedURL.lastPathComponent,
+                season: "Custom",
+                buildVersion: "Local Build",
+                iconName: "doc.fill"
+            )
+            parent.versions.append(importedVersion)
+        }
     }
 }
